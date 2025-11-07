@@ -1,0 +1,126 @@
+sim=require'sim'
+local jointHandles = {} 
+local attachPoint = -1
+
+-- Converte de Graus para Radianos
+local rad = math.pi / 180
+
+-- Parametros de movimento
+local vel=110
+local accel=40
+local jerk=80
+local maxVel, maxAccel, maxJerk
+
+-- Angulos das juntas
+local posEsperar_rad, posPegar_rad, posLixeiraV_rad, posLixeiraG_rad, posLixeiraA_rad
+--fun??o que faz o movimento
+function moveToConfig(handles,maxVel,maxAccel,maxJerk,targetConf)
+    local params = {
+        joints = handles,
+        targetPos = targetConf,
+        maxVel = maxVel,
+        maxAccel = maxAccel,
+        maxJerk = maxJerk,
+    }
+    sim.moveToConfig(params)
+end
+
+
+function sysCall_init()
+
+    
+   jointHandles[1] = sim.getObject('/main/LBRiiwa14R820/joint') 
+    jointHandles[2] = sim.getObject('/main/LBRiiwa14R820/joint/joint') 
+    jointHandles[3] = sim.getObject('/main/LBRiiwa14R820/joint/joint/joint') 
+    jointHandles[4] = sim.getObject('/main/LBRiiwa14R820/joint/joint/joint/joint') 
+    jointHandles[5] = sim.getObject('/main/LBRiiwa14R820/joint/joint/joint/joint/joint') 
+    jointHandles[6] = sim.getObject('/main/LBRiiwa14R820/joint/joint/joint/joint/joint/joint') 
+    jointHandles[7] = sim.getObject('/main/LBRiiwa14R820/joint/joint/joint/joint/joint/joint/joint') 
+    
+
+    attachPoint = sim.getObject('/main/LBRiiwa14R820/joint/link2_resp/joint/link3_resp/joint/link4_resp/joint/link5_resp/joint/link6_resp/joint/link7_resp/joint/link8_resp/connection/attachPoint') -- 8. Arraste o 'KUKA_attachPoint' aqui
+    
+
+    -- Converte parametros para radiano
+    maxVel={vel*rad,vel*rad,vel*rad,vel*rad,vel*rad,vel*rad,vel*rad}
+    maxAccel={accel*rad,accel*rad,accel*rad,accel*rad,accel*rad,accel*rad,accel*rad}
+    maxJerk={jerk*rad,jerk*rad,jerk*rad,jerk*rad,jerk*rad,jerk*rad,jerk*rad}
+
+    -- posicoes das juntas em radianos
+    posEsperar_rad = {-45*rad, 45*rad, 0*rad, 0*rad, 80*rad, 0*rad, 0*rad}
+    posPegar_rad = {-48*rad, 49.5*rad, 0*rad, 0*rad, 80*rad, 0*rad, 0*rad}
+    posLixeiraV_rad = {0*rad, 43.5*rad, 0*rad, 0*rad, 80*rad, 0*rad, 0*rad}
+    posLixeiraG_rad = {30*rad, 43.5*rad, 0*rad, 0*rad, 80*rad, 0*rad, 0*rad}
+    posLixeiraA_rad = {60*rad, 50.5*rad, 0*rad, 0*rad, 80*rad, 0*rad, 0*rad}
+
+    -- Garante que o sensor comeca sem sinal
+    sim.setIntegerSignal('detectedObjectHandle', -1)
+end
+
+
+function sysCall_thread()
+    local estado_atual = "ir_para_posicao_espera"
+    local objectHandle = -1
+    local cor = 0
+
+    while sim.getSimulationState() ~= sim.simulation_stopped do
+    
+        if estado_atual == "ir_para_posicao_espera" then
+            
+            moveToConfig(jointHandles, maxVel, maxAccel, maxJerk, posEsperar_rad)
+            estado_atual = "aguardando_cubo"
+
+        elseif estado_atual == "aguardando_cubo" then
+    
+            
+            local detectedHandle = sim.getIntegerSignal('detectedObjectHandle')
+            if detectedHandle > 0 then
+                objectHandle = detectedHandle
+                cor = sim.getIntegerSignal('boxColor')
+                sim.setIntegerSignal('detectedObjectHandle', -1) 
+                sim.setIntegerSignal('detectedBox', 0)
+                estado_atual = "ir_para_posicao_pegar"
+            end
+            
+        elseif estado_atual == "ir_para_posicao_pegar" then
+            moveToConfig(jointHandles, maxVel, maxAccel, maxJerk, posPegar_rad)
+            estado_atual = "pegar_cubo"
+            
+        elseif estado_atual == "pegar_cubo" then
+            sim.wait(1.0) 
+            if objectHandle > 0 then
+                sim.setObjectParent(objectHandle, attachPoint, true)
+            end
+            sim.wait(0.5)
+            estado_atual = "ir_para_lixeira"
+            
+        elseif estado_atual == "ir_para_lixeira" then
+            local targetAngles_rad = posLixeiraV_rad 
+            if cor == 2 then
+                targetAngles_rad = posLixeiraG_rad
+            elseif cor == 3 then
+                targetAngles_rad = posLixeiraA_rad
+                
+            end
+            
+           
+            moveToConfig(jointHandles, maxVel, maxAccel, maxJerk, targetAngles_rad)
+            estado_atual = "soltar_cubo"
+            
+        elseif estado_atual == "soltar_cubo" then 
+
+            sim.wait(1.0) 
+            if objectHandle > 0 then
+                sim.setObjectParent(objectHandle, -1, true)
+            end
+            sim.wait(0.5)
+            
+            objectHandle = -1
+            cor = 0
+            
+            estado_atual = "ir_para_posicao_espera"
+        end
+        
+        sim.wait(0.1)
+    end
+end
